@@ -261,7 +261,6 @@ void SmallShell::executeCommand(const char *cmd_line) {
                 if (typeid(*cmd) == typeid(TimeoutCommand)) {
                     this->addTimeoutCMD(dynamic_cast<TimeoutCommand *>(cmd));
                 }
-                _removeBackgroundSign(reinterpret_cast<char *>(cmd));
                 addJobShell(cmd);
             }
         }
