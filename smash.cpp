@@ -1,13 +1,11 @@
 #include <iostream>
 #include <unistd.h>
 #include <sys/wait.h>
-#include <signal.h>
-#include "Commands.h"
 #include "signals.h"
 
 int main(int argc, char* argv[]) {
 
-    struct sigaction sa;
+    struct sigaction sa{};
     sa.sa_flags = SA_RESTART;
     sa.sa_handler = alarmHandler;
     if(signal(SIGTSTP , ctrlZHandler)==SIG_ERR) {
@@ -20,7 +18,6 @@ int main(int argc, char* argv[]) {
         perror("smash error: failed to set sig-alarm handler");
     }
 
-    //TODO: setup sig alarm handler
     SmallShell& smash = SmallShell::getInstance();
     while(smash.getActiveStatus()) {
         std::cout << smash.getChprompt();

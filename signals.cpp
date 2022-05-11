@@ -1,19 +1,20 @@
-#include <iostream>
-#include <signal.h>
 #include "signals.h"
-#include "Commands.h"
+
 
 using namespace std;
 
 void ctrlZHandler(int sig_num) {
     SmallShell& small_shell = SmallShell::getInstance();
-//    if(small_shell.getCmdLine() == ""){}
     cout << "smash: got ctrl-Z" << endl;
     if(small_shell.getActiveCMD() == nullptr){
         return;
     }
-    int res = kill(small_shell.getActivePID(), SIGSTOP);
-    cout << "smash: process " << small_shell.getActivePID()  << " was stopped" << endl;
+    int res = kill(small_shell.getActiveCMD()->getCmdPID(), SIGSTOP);
+    if (res != SUCCESS){
+        smashError::SyscallFailed("kill");
+        return;
+    }
+    cout << "smash: process " << small_shell.getActiveCMD()->getCmdPID()  << " was stopped" << endl;
     small_shell.addJobShell(small_shell.getActiveCMD(),true);
     small_shell.setActiveCMD(nullptr);
 }
@@ -21,12 +22,16 @@ void ctrlZHandler(int sig_num) {
 void ctrlCHandler(int sig_num) {
     SmallShell& small_shell = SmallShell::getInstance();
     cout << "smash: got ctrl-C" << endl;
-    if(small_shell.getActiveCMD() == nullptr || waitpid(small_shell.getActiveCMD()->getCmdPID(), NULL, WNOHANG) != 0){
+    if(small_shell.getActiveCMD() == nullptr || waitpid(small_shell.getActiveCMD()->getCmdPID(), nullptr, WNOHANG) != 0){
         small_shell.setActiveCMD(nullptr);
         return;
     }
-    int res = kill(small_shell.getActivePID(), SIGKILL);
-    cout << "smash: process " << small_shell.getActivePID() << " was killed" << endl;
+    int res = kill(small_shell.getActiveCMD()->getCmdPID(), SIGKILL);
+    if (res != SUCCESS){
+        smashError::SyscallFailed("kill");
+        return;
+    }
+    cout << "smash: process " << small_shell.getActiveCMD()->getCmdPID() << " was killed" << endl;
     small_shell.setActiveCMD(nullptr);
 }
 

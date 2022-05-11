@@ -3,54 +3,82 @@
 
 #include <sys/wait.h>
 #include <vector>
-#include <time.h>
 #include <unistd.h>
-#include <string.h>
-#include <stdio.h>
+
+#include <cstdio>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-
+#include <memory>
+#include <iostream>
+#include <sstream>
+#include <ctime>
+#include <utime.h>
+#include <climits>
+#include <cstring>
 
 #define COMMAND_ARGS_MAX_LENGTH (200)
 #define COMMAND_MAX_ARGS (20)
 
+#define YEARS_OFFSET    1900
+#define MONTHS_OFFSET   1
+#define FAILURE         (-1)
+#define SUCCESS         0
+#define MIN_JOB_ID      1
+#define OPEN_FAILED     (-1)
+#define PIPE_READ       0
+#define PIPE_WRITE      1
 
+inline void freeArgs(char** args,int num_of_args)
+{
+    for(int i = 0 ; i < num_of_args ; i++)
+    {
+        free(args[i]);
+    }
+    delete[] args;
+}
+
+inline bool isDigits(const std::string &str) {
+    return (str.find_first_not_of("0123456789") == std::string::npos
+            || (str.substr(0, 1).find_first_not_of("-123456789") == std::string::npos &&
+                str.substr(1).find_first_not_of("0123456789") == std::string::npos));
+
+}
 
 class smashError {
 public:
-    static void TooManyArguments(std::string func) {
+    static void TooManyArguments(const std::string& func) {
         std::string error_msg = "smash error: " + func + ": " + "too many arguments";
         std::cerr << error_msg << std::endl;
     }
 
-    static void PWDNotSet(std::string func) {
+    static void PWDNotSet(const std::string& func) {
         std::string error_msg = "smash error: " + func + ": " + "OLDPWD not set";
         std::cerr << error_msg << std::endl;
     }
 
-    static void InvalidArguments(std::string func) {
+    static void InvalidArguments(const std::string& func) {
         std::string error_msg = "smash error: " + func + ": " + "invalid arguments";
         std::cerr << error_msg << std::endl;
     }
 
-    static void NotExist(int jobID, std::string func) {
+    static void NotExist(int jobID, const std::string& func) {
         std::string error_msg = "smash error: " + func +  ": " + "job-id " + std::to_string(jobID) + " does not exist"  ;
         std::cerr << error_msg << std::endl;
     }
 
-    static void EmptyJobList(std::string func) {
+    static void EmptyJobList(const std::string& func) {
         std::string error_msg = "smash error: " + func + ": " + "jobs list is empty";
         std::cerr << error_msg << std::endl;
     }
 
-    static void AlreadyRunning(int jobID, std::string func) {
+    static void AlreadyRunning(int jobID, const std::string& func) {
         std::string error_msg = "smash error: " + func + ": " + "job-id " + std::to_string(jobID);
         error_msg += " is already running in the background";
         std::cerr << error_msg << std::endl;
     }
 
-    static void NoneStoppedJobs(std::string func) {
+    static void NoneStoppedJobs(const std::string& func) {
         std::string error_msg = "smash error: " + func + ": " + "there is no stopped jobs to resume";
         std::cerr << error_msg << std::endl;
     }
@@ -60,35 +88,44 @@ public:
         perror(error_msg.c_str());
     }
 
-    static void SyscallFailed(std::string syscall) {
+    static void SyscallFailed(const std::string& syscall) {
         std::string error_msg = "smash error: " + syscall + " failed";
         perror(error_msg.c_str());
     }
 
 };
 
+
+
 class Command {
+
 public:
     char *cmd_line;
     char *bg_cmd;
     pid_t cmd_pid;
     bool bg_command;
-    bool is_timeout;
     char *actual_cmd;
+    bool error = false;
 
 public:
-    Command(const char *cmd_line);
+    explicit Command(const char *cmd_line);
 
-    virtual ~Command() {}
+    virtual ~Command() =default;
 
     virtual void execute() = 0;
 
-    pid_t getCmdPID() {
+    pid_t getCmdPID() const {
         return cmd_pid;
     }
 
-    const char *getCmdLine() {
+    const char *getCmdLine() const {
         return cmd_line;
+    }
+    void setError(){
+        this->error = true;
+    }
+    bool getError() const{
+        return this->error;
     }
 
     void setCmdPID(pid_t new_pid) {
@@ -98,22 +135,22 @@ public:
     virtual void cleanup() { };
 
 
-
-    // TODO: Add your extra methods if needed
 };
 
 class BuiltInCommand : public Command {
+protected:
+    char **args;
+    int num_of_args;
 public:
-    BuiltInCommand(const char *cmd_line) : Command(cmd_line) {}
-
-    virtual ~BuiltInCommand() {}
+    explicit BuiltInCommand(const char *cmd_line);
+    virtual ~BuiltInCommand()  =default;
 };
 
 class ExternalCommand : public Command {
 public:
-    ExternalCommand(const char *cmd_line) : Command(cmd_line) {}
+    explicit ExternalCommand(const char *cmd_line) : Command(cmd_line) {}
 
-    virtual ~ExternalCommand() {}
+    virtual ~ExternalCommand()  =default;
 
     void execute() override;
 };
@@ -126,7 +163,7 @@ public:
     PipeCommand(const char *cmd_line,std::string cmd1, std::string cmd2, bool err):
             Command(cmd_line),cmd1(cmd1),cmd2(cmd2),err(err){};
 
-    virtual ~PipeCommand() {}
+    virtual ~PipeCommand()=default;
 
     void execute() override;
 };
@@ -138,17 +175,11 @@ class RedirectionCommand : public Command {
     int file_fd;
     int saved_stdout_fd;
 public:
-    RedirectionCommand(const char *cmd_line,std::string RCCmd, std::string RCOutputFile,int flags):Command(cmd_line),RCCmd(RCCmd),RCOutputFile(RCOutputFile), flags(flags),
-                                                                                                   file_fd(-1) ,saved_stdout_fd(STDOUT_FILENO){}
-//        this->RCCmd = RCCmd;
-//        this->RCOutputFile = RCOutputFile;
-//        this->flags = flags;
-//        this->file_fd = -1;
-//        this->saved_stdout_fd = STDOUT_FILENO;
-//    }
+    RedirectionCommand(const char *cmd_line,std::string RCCmd, std::string RCOutputFile,int flags):Command(cmd_line),
+                                                                                                   RCCmd(RCCmd),RCOutputFile(RCOutputFile), flags(flags), file_fd(-1) ,saved_stdout_fd(STDOUT_FILENO){}
 
 
-    virtual ~RedirectionCommand() {}
+    virtual ~RedirectionCommand()=default;
 
     void execute() override;
     void prepare() override;
@@ -159,28 +190,34 @@ class ChangeDirCommand : public BuiltInCommand {
     char **plastPwd;
     std::string path;
 public:
-    ChangeDirCommand(const char *cmd_line, char **plastPwd, std::string path) :
-            BuiltInCommand(cmd_line), plastPwd(plastPwd), path(path) {}
+    ChangeDirCommand(const char *cmd_line, char **plastPwd) : BuiltInCommand(cmd_line),plastPwd(plastPwd){
+        if (this->num_of_args > 2) {
+            smashError::TooManyArguments("cd");
+            this->setError();
+        } else {
+            this->path= this->args[1];
+        }
+    }
 
-    virtual ~ChangeDirCommand() {}
+    virtual ~ChangeDirCommand() =default;
 
     void execute() override;
 };
 
 class GetCurrDirCommand : public BuiltInCommand {
 public:
-    GetCurrDirCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {};
+    explicit GetCurrDirCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {};
 
-    virtual ~GetCurrDirCommand() {}
+    virtual ~GetCurrDirCommand() = default;
 
     void execute() override;
 };
 
 class ShowPidCommand : public BuiltInCommand {
 public:
-    ShowPidCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {};
+    explicit ShowPidCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {};
 
-    virtual ~ShowPidCommand() {}
+    virtual ~ShowPidCommand() = default;
 
     void execute() override;
 };
@@ -189,13 +226,16 @@ class JobsList;
 
 class QuitCommand : public BuiltInCommand {
     JobsList *job_list;
-    bool shouldKill;
+    bool shouldKill = false;
 public:
-    QuitCommand(const char *cmd_line, JobsList *jobs, bool shouldKill = false) : BuiltInCommand(cmd_line),
-                                                                                 job_list(jobs),
-                                                                                 shouldKill(shouldKill) {};
+    QuitCommand(const char *cmd_line, JobsList *jobs) : BuiltInCommand(cmd_line),job_list(jobs)
+    {
+        if (num_of_args >= 2 && strcmp(args[1], "kill") == 0) {
+            this->shouldKill = true;
+        }
+    }
 
-    virtual ~QuitCommand() {}
+    virtual ~QuitCommand()= default;
 
     void execute() override;
 };
@@ -227,14 +267,14 @@ public:
             return this->stopped;
         }
 
-        void setStoppedStatus(bool stopped) {
-            this->stopped = stopped;
+        void setStoppedStatus(bool stop) {
+            this->stopped = stop;
         }
         void setTimeInserted(){
             this->time_inserted= time(nullptr);
         }
-        void setCMD(Command* cmd){
-            this->cmd =cmd;
+        void setCMD(Command* command){
+            this->cmd =command;
         }
 
         friend std::ostream &operator<<(std::ostream &os, const JobEntry &jobEntry);
@@ -271,9 +311,31 @@ public:
         }
     }
 
-    void killAllJobs();
+    void killAllJobs(){
+        for (auto &job: *this->jobs_list) {
+            if (kill(job->getJobCMD()->getCmdPID(), SIGKILL) !=SUCCESS){
+                smashError::SyscallFailed("kill");
+            }
+            std::cout << job->getJobCMD()->getCmdPID() << ": ";
+            std::cout << job->getJobCMD()->getCmdLine() << std::endl;
+        }
+    }
 
-    void removeFinishedJobs();
+    void removeFinishedJobs() const {
+        pid_t zombie_pid;
+        if (this->jobs_list == nullptr || jobs_list->empty()) {
+            return;
+        }
+        auto iter = this->jobs_list->begin();
+        while (iter != this->jobs_list->end()) {
+            zombie_pid = waitpid((*iter)->getJobCMD()->getCmdPID(), nullptr, WNOHANG);
+            if (*iter != nullptr && (*iter)->getJobCMD()->getCmdPID() == zombie_pid) {
+                this->jobs_list->erase(iter);
+            } else {
+                iter++;
+            }
+        }
+    }
 
     JobEntry *getJobById(int jobId) {
         for (auto &job: *this->jobs_list) {
@@ -340,7 +402,7 @@ public:
     }
 
     friend class SmallShell;
-    // TODO: Add extra methods or modify exisitng ones as needed
+
 };
 
 class JobsCommand : public BuiltInCommand {
@@ -348,8 +410,7 @@ class JobsCommand : public BuiltInCommand {
 public:
     JobsCommand(const char *cmd_line, JobsList *jobs) : BuiltInCommand(cmd_line), job_list(jobs) {};
 
-    virtual ~JobsCommand() {}
-
+    virtual ~JobsCommand()=default;
     void execute() override;
 };
 
@@ -358,48 +419,78 @@ class KillCommand : public BuiltInCommand {
     int commandID;
     int sig_num;
 public:
-    KillCommand(const char *cmd_line, JobsList *jobs, std::string commandID, std::string sig_num) : BuiltInCommand(
-            cmd_line), job_list(jobs) {
-        this->commandID = std::stoi(commandID);
-        this->sig_num = std::stoi(sig_num);
+    KillCommand(const char *cmd_line, JobsList *jobs) : BuiltInCommand(cmd_line), job_list(jobs) {
+        if (num_of_args != 3 || args[1][0] != '-' || !isDigits(std::string(args[1]).substr(1)) || !isDigits(args[2]) ||
+            stoi(std::string(args[1]).substr(1)) < 1 || stoi(std::string(args[1]).substr(1)) > 63) {
+            smashError::InvalidArguments("kill");
+            this->setError();
+        } else {
+            this->commandID = std::stoi(args[2]);
+            this->sig_num = std::stoi(std::string(args[1]).substr(1));
+        }
     }
 
-    virtual ~KillCommand() {}
-
+    virtual ~KillCommand()=default;
     void execute() override;
 };
 
 class ForegroundCommand : public BuiltInCommand {
     JobsList *jobs_list_ptr;
-    int commandID;
-    bool pick_last;
+    int jobID;
+    bool pick_last = false;
 public:
-    ForegroundCommand(const char *cmd_line, JobsList *jobs, int commandID, bool pick_last = false) : BuiltInCommand(cmd_line),
-                                                                                                     jobs_list_ptr(jobs), commandID(commandID), pick_last(pick_last) {}
+    ForegroundCommand(const char *cmd_line, JobsList *job_list) : BuiltInCommand(cmd_line) ,jobs_list_ptr(job_list)
+    {
+        if (num_of_args == 1) {
+            this->jobID= -1;
+            this->pick_last= true;
+        } else if (num_of_args > 2 || (!(isDigits(args[1])))) {
+            smashError::InvalidArguments("fg");
+            this->setError();
+        } else {
+            this->jobID= atoi(args[1]);
+        }
+    }
 
-    virtual ~ForegroundCommand() {}
-
+    virtual ~ForegroundCommand()=default;
     void execute() override;
 };
 
 class BackgroundCommand : public BuiltInCommand {
     JobsList *job_list;
-    int commandID;
+    int jobID;
     bool pick_last;
 public:
-    BackgroundCommand(const char *cmd_line, JobsList *jobs, int commandID , bool pick_last = false) : BuiltInCommand(cmd_line),
-                                                                                                      job_list(jobs),commandID(commandID),pick_last(pick_last) {}
-
-    virtual ~BackgroundCommand() {}
-
+    BackgroundCommand(const char *cmd_line, JobsList *job_list) : BuiltInCommand(cmd_line),job_list(job_list)
+    {
+        if (num_of_args == 1) {
+            this->jobID= -1;
+            this->pick_last= true;
+        } else if (num_of_args > 2 || (!(isDigits(args[1])))) {
+            smashError::InvalidArguments("bg");
+            this->setError();
+        } else {
+            jobID= atoi(args[1]);
+        }
+    }
+    virtual ~BackgroundCommand()=default;
     void execute() override;
 };
 
 class TimeoutCommand : public BuiltInCommand {
     int timeout;
-    time_t time_create;
+    time_t time_create = time(nullptr);
 public:
-    TimeoutCommand(const char *cmd_line,int timeout) : BuiltInCommand(cmd_line),timeout(timeout),time_create(time(nullptr)){};
+    explicit TimeoutCommand(const char *cmd_line) : BuiltInCommand(cmd_line)
+    {
+        if (num_of_args > 2 && isDigits(args[1]) && args[1][0] != '-') {
+
+            this->timeout = atoi(args[1]);
+        } else {
+            smashError::InvalidArguments("timeout");
+            this->setError();
+        }
+    }
     int getTimeOut(){
         return this->timeout;
     }
@@ -409,19 +500,27 @@ public:
     pid_t getCmdPid(){
         return this->cmd_pid;
     }
-    virtual ~TimeoutCommand() {}
-
+    virtual ~TimeoutCommand()=default;
     void execute() override;
 };
 
 class TailCommand : public BuiltInCommand {
     std::string file;
-    unsigned int n;
+    int n = 10;
 public:
-    TailCommand(const char *cmd_line, std::string file, int n = 10) : BuiltInCommand(cmd_line),file(file),n(n){};
-
-    virtual ~TailCommand() {}
-
+    explicit TailCommand(const char *cmd_line) : BuiltInCommand(cmd_line)
+    {
+        if (num_of_args == 2) {
+            file = args[1];
+        } else if (num_of_args == 3 && args[1][0] == '-' && isDigits(std::string(args[1]).substr(1))) {
+            file = args[2],
+                    n = stoi(std::string(args[1]).substr(1));
+        } else {
+            smashError::InvalidArguments("tail");
+            this->setError();
+        }
+    }
+    virtual ~TailCommand()=default;
     void execute() override;
 };
 
@@ -429,9 +528,20 @@ class TouchCommand : public BuiltInCommand {
     std::string file;
     std::string time;
 public:
-    TouchCommand(const char *cmd_line,std::string file,std::string time): BuiltInCommand(cmd_line),file(file),time(time){};
-
-    virtual ~TouchCommand() {}
+    explicit TouchCommand(const char *cmd_line): BuiltInCommand(cmd_line)
+    {
+        if (num_of_args != 3)
+        {
+            smashError::InvalidArguments("touch");
+            this->setError();
+        }
+        else
+        {
+            this->file = args[1];
+            this->time = args[2];
+        }
+    }
+    virtual ~TouchCommand()=default;
 
     void execute() override;
 };
@@ -482,19 +592,12 @@ public:
         job_list.addJob(cmd, isStopped);
     }
 
-    pid_t getActivePID() {
-        return this->fg_command->getCmdPID();
-    }
 
-    void setActivePID(pid_t pid) {
-        this->fg_command->setCmdPID(pid);
-    }
 
     Command *getActiveCMD() {
         return this->fg_command;
     }
-
-    void setActiveCMD(Command *cmd) {
+    void setActiveCMD(Command* cmd) {
         this->fg_command = cmd;
     }
 
@@ -502,7 +605,7 @@ public:
         this->shellActive = false;
     }
 
-    bool getActiveStatus() {
+    bool getActiveStatus() const {
         return this->shellActive;
     }
 
@@ -514,16 +617,6 @@ public:
         strcpy(this->plastPwd,plast_pwd);
     }
 
-    std::string getCmdLine() {
-        return this->cmdLine;
-    }
-
-    void setCmdLine(std::string cmd_line) {
-        this->cmdLine = cmd_line;
-    }
-    void removeFinishedJobs(){
-        this->job_list.removeFinishedJobs();
-    }
     void removeJobByPID(pid_t pid){
         this->job_list.removeJobByPID(pid);
     }
@@ -531,7 +624,7 @@ public:
         this->timeout_list->push_back(timout_cmd);
         this->timeoutAlarm();
     }
-    pid_t getTimeoutPid(){
+    pid_t getTimeoutPid() const{
         return this->timeout_pid;
     }
     std::string getTimeoutCmdLine(){
@@ -549,34 +642,25 @@ public:
     }
     void timeoutAlarm()
     {
-        pid_t zombie_pid;
         if (this->timeout_list == nullptr || timeout_list->empty()) {
             return;
         }
         auto iter = this->timeout_list->begin();
         TimeoutCommand* to_alart = *iter;
         while (iter != this->timeout_list->end()) {
-            int status;
             int min_time = to_alart->getTimeOut() - difftime(time(nullptr), to_alart->getTimeCreate());
             int iter_time = (*iter)->getTimeOut() - difftime(time(nullptr), (*iter)->getTimeCreate());
             if(iter_time < min_time && iter_time >= 0) {
                 to_alart = *iter;
             }
-                iter++;
-            }
+            iter++;
+        }
         alarm(to_alart->getTimeOut() - difftime(time(nullptr), to_alart->getTimeCreate()));
         this->timeout_pid = to_alart->getCmdPID();
         this->timeout_cmd_line = to_alart->getCmdLine();
     }
 };
 
-//int res = kill((*iter)->getCmdPID(), SIGKILL);
-//if( res!= 0){
-//smashError::SyscallFailed("kill");
-//return;
-//}
-//std::cout << "smash: " << (*iter)->getCmdLine()  << " timed out!" << std::endl;
-//this->timeout_list->erase(iter);
 
 
 inline std::ostream &operator<<(std::ostream &os, const JobsList::JobEntry &jobEntry) {
